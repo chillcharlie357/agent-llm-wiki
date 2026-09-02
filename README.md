@@ -36,11 +36,13 @@ MyWiki/
 ├── AGENTS.md                # Agent 维护规则
 ├── wiki/                    # 整理后的长期知识
 │   ├── index.md
-│   └── log.md
+│   ├── log.md
+│   └── memory/              # 审核后的长期记忆
 ├── raw/                     # 原始来源
 │   ├── documents/
 │   ├── repositories/
-│   └── memories/
+│   ├── memories/
+│   └── memory-inbox/        # Hook 捕获、等待审核的候选记忆
 └── .llm-wiki/sources.tsv    # 来源登记表
 ```
 
@@ -68,13 +70,51 @@ llm-wiki import memory ~/.codex/memories --root ~/Knowledge/MyWiki --name codex-
 llm-wiki status --root ~/Knowledge/MyWiki
 ```
 
+## 通过 Skill 管理记忆
+
+```sh
+# 写入审核后的长期记忆
+llm-wiki memory remember api-choice \
+  --root ~/Knowledge/MyWiki \
+  --content "项目统一使用 Responses API。" \
+  --summary "项目 API 选型" \
+  --topics "project,decision"
+
+# 新证据出现后修改原记忆
+llm-wiki memory update api-choice \
+  --root ~/Knowledge/MyWiki \
+  --content "项目默认使用 Responses API，旧服务暂时保留 Chat Completions。"
+
+# 根据当前问题召回相关记忆
+llm-wiki memory recall "项目 API 选型" --root ~/Knowledge/MyWiki --limit 5
+```
+
+## 通过 Hook 自动捕获和召回
+
+安装脚本还会安装 `llm-wiki-hook`：
+
+```sh
+# 会话开始或提交提示词时，把相关长期记忆输出给 Agent
+LLM_WIKI_ROOT=~/Knowledge/MyWiki llm-wiki-hook session-start
+LLM_WIKI_ROOT=~/Knowledge/MyWiki llm-wiki-hook prompt
+
+# 会话结束时，把 transcript 放入待审核 inbox
+LLM_WIKI_ROOT=~/Knowledge/MyWiki \
+LLM_WIKI_TRANSCRIPT=/path/to/session.jsonl \
+llm-wiki-hook session-end
+```
+
+Hook 不会把整段对话直接写进长期记忆。它只把候选内容放入 `raw/memory-inbox/`，再由 `llm-wiki` Skill 清理隐私、判断是否值得保留，并调用 `memory remember` 或 `memory update`。这样可以避免临时对话、误判和密钥污染 Wiki。
+
+Claude Code 的完整 Hook 配置，以及 Codex、Trae、OpenCode、Pi 的通用适配协议，见 `skills/llm-wiki/references/hooks.md`。
+
 ## 卸载
 
 ```sh
 ./uninstall.sh --harness <codex|trae|opencode|pi|claude>
 ```
 
-卸载只移除 Skill 和 `llm-wiki` 命令，不会删除任何 Wiki 数据。
+卸载只移除 Skill、`llm-wiki` 和 `llm-wiki-hook` 命令，不会删除任何 Wiki 数据，也不会修改 harness 自己的 Hook 配置。
 
 ## 设计边界
 
@@ -87,7 +127,8 @@ llm-wiki status --root ~/Knowledge/MyWiki
 ## 测试
 
 ```sh
-sh -n install.sh uninstall.sh skills/llm-wiki/scripts/llm-wiki tests/test_llm_wiki.sh
+sh -n install.sh uninstall.sh skills/llm-wiki/scripts/llm-wiki \
+  skills/llm-wiki/scripts/llm-wiki-hook tests/test_llm_wiki.sh
 ./tests/test_llm_wiki.sh
 ```
 

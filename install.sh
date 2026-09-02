@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# Install the llm-wiki skill for one or more Agent Skills compatible harnesses.
+# Install the llm-wiki skill and hook adapter for Agent Skills compatible harnesses.
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SKILL_SOURCE="$ROOT_DIR/skills/llm-wiki"
@@ -75,6 +75,10 @@ if [ -e "$BIN_DIR/llm-wiki" ] && ! grep -q '^# llm-wiki-cli$' "$BIN_DIR/llm-wiki
   printf 'Refusing to replace an unrecognized command: %s\n' "$BIN_DIR/llm-wiki" >&2
   exit 1
 fi
+if [ -e "$BIN_DIR/llm-wiki-hook" ] && ! grep -q '^# llm-wiki-hook$' "$BIN_DIR/llm-wiki-hook"; then
+  printf 'Refusing to replace an unrecognized command: %s\n' "$BIN_DIR/llm-wiki-hook" >&2
+  exit 1
+fi
 
 installed=0
 case "$HARNESS" in
@@ -96,8 +100,9 @@ esac
 
 mkdir -p "$BIN_DIR"
 cp "$SKILL_SOURCE/scripts/llm-wiki" "$BIN_DIR/llm-wiki"
-chmod +x "$BIN_DIR/llm-wiki"
-printf 'Installed command: %s\n' "$BIN_DIR/llm-wiki"
+cp "$SKILL_SOURCE/scripts/llm-wiki-hook" "$BIN_DIR/llm-wiki-hook"
+chmod +x "$BIN_DIR/llm-wiki" "$BIN_DIR/llm-wiki-hook"
+printf 'Installed commands: %s, %s\n' "$BIN_DIR/llm-wiki" "$BIN_DIR/llm-wiki-hook"
 case :"$PATH": in
   *:"$BIN_DIR":*) ;;
   *) printf 'Add %s to PATH to call llm-wiki directly.\n' "$BIN_DIR" ;;
