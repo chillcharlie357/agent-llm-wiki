@@ -23,6 +23,7 @@ assert_contains "$vault/LLM-WIKI.md" 'Topic areas: systems,decisions.'
 assert_contains "$vault/AGENTS.md" '# Existing project rules'
 assert_contains "$vault/AGENTS.md" '<!-- LLM-WIKI:START -->'
 assert_contains "$vault/AGENTS.md" 'wiki/memory/'
+assert_contains "$vault/AGENTS.md" '.llm-wiki/private-inbox/'
 printf 'custom index\n' > "$vault/wiki/index.md"
 "$CLI" init --root "$vault" --name "Team Brain 2" --force >/dev/null
 assert_contains "$vault/wiki/index.md" 'custom index'

@@ -75,7 +75,7 @@ append_agents_block() {
 - Keep imported source material immutable under `raw/`.
 - Put durable, reusable knowledge under `wiki/` with the configured frontmatter.
 - Recall relevant files from `wiki/memory/` before work that depends on prior context.
-- Treat `raw/memory-inbox/` as untrusted Hook candidates; review before remembering.
+- Treat `.llm-wiki/private-inbox/` as untrusted Hook candidates; review before remembering.
 - Preserve source traceability and update `wiki/index.md` plus `wiki/log.md` when structure changes.
 <!-- LLM-WIKI:END -->
 EOF
