@@ -1,0 +1,330 @@
+#!/bin/sh
+# llm-wiki-cli
+set -eu
+
+VERSION=0.1.0
+ROOT=.
+
+usage() {
+  cat <<'EOF'
+Usage:
+  llm-wiki init [--root DIR] [--name NAME] [--purpose TEXT] [--language LANG]
+                [--areas CSV] [--fields CSV] [--force]
+  llm-wiki import document SOURCE [--root DIR] [--name NAME]
+  llm-wiki import repo SOURCE [--root DIR] [--name NAME]
+  llm-wiki import memory SOURCE [--root DIR] [--name NAME]
+  llm-wiki status [--root DIR]
+  llm-wiki version
+EOF
+}
+
+die() { printf 'llm-wiki: %s\n' "$*" >&2; exit 1; }
+
+safe_name() {
+  value=$(printf '%s' "$1" | sed 's/[?#].*$//' | sed 's:/*$::' | sed 's:.*/::' | sed 's/\.git$//' | tr ' ' '-' | sed 's:[/\\]:-:g; s/^[-.]*//; s/[-.]*$//')
+  [ -n "$value" ] || value=source
+  printf '%s\n' "$value"
+}
+
+yaml_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+absolute_root() {
+  mkdir -p "$ROOT"
+  ROOT=$(CDPATH= cd -- "$ROOT" && pwd)
+}
+
+config_value() {
+  key=$1
+  sed -n "s/^${key}=//p" "$ROOT/.llm-wiki/config" | head -n 1
+}
+
+require_initialized() {
+  [ -f "$ROOT/LLM-WIKI.md" ] && [ -f "$ROOT/.llm-wiki/config" ] || die "$ROOT is not initialized; run 'llm-wiki init' first"
+}
+
+validate_registry_field() {
+  case "$2" in *"$(printf '\t')"*) die "$1 cannot contain tabs or newlines" ;; esac
+  [ "$(printf '%s\n' "$2" | wc -l | tr -d ' ')" -eq 1 ] || die "$1 cannot contain tabs or newlines"
+}
+
+append_agents_block() {
+  agents=$ROOT/AGENTS.md
+  marker='<!-- LLM-WIKI:START -->'
+  if [ -f "$agents" ] && grep -Fq "$marker" "$agents"; then return; fi
+  if [ -s "$agents" ]; then printf '\n' >> "$agents"; fi
+  cat >> "$agents" <<'EOF'
+<!-- LLM-WIKI:START -->
+## LLM Wiki
+
+- Read `LLM-WIKI.md` before changing knowledge structure.
+- Search `wiki/` before reading `raw/` or creating a page.
+- Keep imported source material immutable under `raw/`.
+- Put durable, reusable knowledge under `wiki/` with the configured frontmatter.
+- Preserve source traceability and update `wiki/index.md` plus `wiki/log.md` when structure changes.
+<!-- LLM-WIKI:END -->
+EOF
+}
+
+init_cmd() {
+  NAME='My LLM Wiki'
+  PURPOSE='Shared durable knowledge and project memory for people and agents.'
+  LANGUAGE='English'
+  AREAS='projects,concepts,decisions'
+  FIELDS=''
+  FORCE=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root) [ "$#" -ge 2 ] || die '--root needs a value'; ROOT=$2; shift 2 ;;
+      --name) [ "$#" -ge 2 ] || die '--name needs a value'; NAME=$2; shift 2 ;;
+      --purpose) [ "$#" -ge 2 ] || die '--purpose needs a value'; PURPOSE=$2; shift 2 ;;
+      --language) [ "$#" -ge 2 ] || die '--language needs a value'; LANGUAGE=$2; shift 2 ;;
+      --areas) [ "$#" -ge 2 ] || die '--areas needs a value'; AREAS=$2; shift 2 ;;
+      --fields) [ "$#" -ge 2 ] || die '--fields needs a value'; FIELDS=$2; shift 2 ;;
+      --force) FORCE=1; shift ;;
+      *) die "unknown init option: $1" ;;
+    esac
+  done
+  absolute_root
+  validate_registry_field name "$NAME"
+  validate_registry_field purpose "$PURPOSE"
+  validate_registry_field language "$LANGUAGE"
+  validate_registry_field areas "$AREAS"
+  validate_registry_field fields "$FIELDS"
+  if [ -e "$ROOT/LLM-WIKI.md" ] && [ "$FORCE" -ne 1 ]; then
+    die "LLM-WIKI.md already exists; use --force only when replacement is intended"
+  fi
+  mkdir -p "$ROOT/.llm-wiki" "$ROOT/wiki" "$ROOT/raw/documents" "$ROOT/raw/repositories" "$ROOT/raw/memories"
+  today=$(date +%F)
+  cat > "$ROOT/.llm-wiki/config" <<EOF
+version=$VERSION
+name=$NAME
+wiki_root=wiki
+source_root=raw
+language=$LANGUAGE
+areas=$AREAS
+fields=$FIELDS
+EOF
+  [ -f "$ROOT/.llm-wiki/sources.tsv" ] || printf 'type\timported_at\tsource\tdestination\n' > "$ROOT/.llm-wiki/sources.tsv"
+  yaml_name=$(yaml_escape "$NAME")
+  cat > "$ROOT/LLM-WIKI.md" <<EOF
+# $NAME schema
+
+$PURPOSE
+
+## Content model
+
+- \`wiki/\` contains curated, reusable knowledge.
+- \`raw/\` contains immutable copies of imported source material.
+- \`.llm-wiki/sources.tsv\` records source provenance.
+- Preferred language: $LANGUAGE.
+- Topic areas: $AREAS.
+
+## Page schema
+
+Every curated page uses YAML frontmatter with these fields:
+
+- \`title\`: human-readable page title.
+- \`summary\`: one or two sentences describing the durable takeaway.
+- \`source\`: source path or URL.
+- \`source_type\`: \`document\`, \`repo\`, \`memory\`, or \`synthesis\`.
+- \`topics\`: list of stable topic labels.
+- \`status\`: \`draft\`, \`active\`, or \`deprecated\`.
+- \`created\` and \`updated\`: ISO dates.
+EOF
+  if [ -n "$FIELDS" ]; then
+    printf '%s\n' "- Additional fields: $FIELDS." >> "$ROOT/LLM-WIKI.md"
+  fi
+  cat >> "$ROOT/LLM-WIKI.md" <<'EOF'
+
+## Maintenance rules
+
+- Search before creating pages; update existing knowledge when possible.
+- Keep facts traceable to imported sources.
+- Keep topic folders shallow and avoid empty navigation-only notes.
+- Record substantial changes in `wiki/log.md`.
+- Never store credentials or private auth material in the wiki.
+EOF
+  if [ ! -f "$ROOT/wiki/index.md" ]; then
+    cat > "$ROOT/wiki/index.md" <<EOF
+---
+title: "$yaml_name"
+summary: "Top-level navigation for $yaml_name."
+source_type: synthesis
+topics: [navigation]
+status: active
+created: $today
+updated: $today
+---
+
+# $NAME
+
+This page is the entry point for curated knowledge. Add topic links as the wiki grows.
+EOF
+  fi
+  if [ ! -f "$ROOT/wiki/log.md" ]; then
+    cat > "$ROOT/wiki/log.md" <<EOF
+---
+title: Maintenance log
+summary: Chronological record of substantial wiki changes.
+source_type: synthesis
+topics: [operations]
+status: active
+created: $today
+updated: $today
+---
+
+# Maintenance log
+
+## $today
+
+- Initialized $NAME and its source registry.
+EOF
+  fi
+  if [ ! -f "$ROOT/raw/README.md" ]; then
+    cat > "$ROOT/raw/README.md" <<'EOF'
+# Source archive
+
+Files below this directory are imported evidence. Keep them unchanged; put summaries and synthesis in `wiki/`.
+EOF
+  fi
+  append_agents_block
+  printf 'Initialized LLM Wiki: %s\n' "$ROOT"
+}
+
+parse_import_args() {
+  SOURCE=$1
+  shift
+  IMPORT_NAME=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root) [ "$#" -ge 2 ] || die '--root needs a value'; ROOT=$2; shift 2 ;;
+      --name) [ "$#" -ge 2 ] || die '--name needs a value'; IMPORT_NAME=$2; shift 2 ;;
+      *) die "unknown import option: $1" ;;
+    esac
+  done
+  absolute_root
+  require_initialized
+  validate_registry_field source "$SOURCE"
+  validate_registry_field name "$IMPORT_NAME"
+  if [ -n "$IMPORT_NAME" ]; then
+    IMPORT_NAME=$(safe_name "$IMPORT_NAME")
+  else
+    IMPORT_NAME=$(safe_name "$SOURCE")
+  fi
+}
+
+record_import() {
+  type=$1
+  source=$2
+  destination=$3
+  timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  case "$source$destination" in
+    *"$(printf '\t')"*|*"
+"*|*"
+"*) die 'tabs and newlines are not allowed in source paths' ;;
+  esac
+  printf '%s\t%s\t%s\t%s\n' "$type" "$timestamp" "$source" "$destination" >> "$ROOT/.llm-wiki/sources.tsv"
+  printf '\n## %s\n\n- Imported %s source: \`%s\`.\n' "$(date +%F)" "$type" "$destination" >> "$ROOT/wiki/log.md"
+  printf 'Imported %s: %s\n' "$type" "$destination"
+}
+
+import_document() {
+  parse_import_args "$@"
+  destination="$ROOT/raw/documents/$IMPORT_NAME"
+  [ ! -e "$destination" ] || die "destination exists: $destination"
+  case "$SOURCE" in
+    http://*|https://*)
+      command -v curl >/dev/null 2>&1 || die 'curl is required for URL imports'
+      download="$destination.download.$$"
+      trap 'rm -f "$download"' EXIT HUP INT TERM
+      curl --fail --location --silent --show-error "$SOURCE" --output "$download"
+      mv "$download" "$destination"
+      trap - EXIT HUP INT TERM
+      ;;
+    *)
+      [ -f "$SOURCE" ] || die "document not found: $SOURCE"
+      cp "$SOURCE" "$destination"
+      ;;
+  esac
+  record_import document "$SOURCE" "raw/documents/$IMPORT_NAME"
+}
+
+import_repo() {
+  parse_import_args "$@"
+  destination="$ROOT/raw/repositories/$IMPORT_NAME"
+  [ ! -e "$destination" ] || die "destination exists: $destination"
+  command -v git >/dev/null 2>&1 || die 'git is required for repository imports'
+  mkdir "$destination"
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/llm-wiki.XXXXXX")
+  archive="$temp_dir/repo.tar"
+  trap 'rm -rf "$temp_dir" "$destination"' EXIT HUP INT TERM
+  if [ -d "$SOURCE/.git" ] || git -C "$SOURCE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$SOURCE" archive --format=tar --output="$archive" HEAD
+  else
+    git clone --quiet --depth 1 "$SOURCE" "$temp_dir/repo" || { rm -rf "$destination"; die "unable to clone repository: $SOURCE"; }
+    git -C "$temp_dir/repo" archive --format=tar --output="$archive" HEAD
+  fi
+  tar -xf "$archive" -C "$destination"
+  rm -rf "$temp_dir"
+  trap - EXIT HUP INT TERM
+  record_import repo "$SOURCE" "raw/repositories/$IMPORT_NAME"
+}
+
+import_memory() {
+  parse_import_args "$@"
+  destination="$ROOT/raw/memories/$IMPORT_NAME"
+  [ ! -e "$destination" ] || die "destination exists: $destination"
+  [ -e "$SOURCE" ] || die "memory source not found: $SOURCE"
+  case "$SOURCE" in
+    "$HOME"|"$HOME/"|/) die 'refusing to import an entire home or filesystem root' ;;
+  esac
+  if [ -f "$SOURCE" ]; then
+    case "$SOURCE" in *.md|*.json|*.jsonl) mkdir "$destination"; cp "$SOURCE" "$destination/$(basename "$SOURCE")" ;; *) die 'memory imports accept only .md, .json, or .jsonl files' ;; esac
+  else
+    file_list=$(mktemp "${TMPDIR:-/tmp}/llm-wiki-files.XXXXXX")
+    trap 'rm -f "$file_list"; rm -rf "$destination"' EXIT HUP INT TERM
+    find "$SOURCE" -type f \( -name '*.md' -o -name '*.json' -o -name '*.jsonl' \) ! -name '.env' ! -path '*/.git/*' > "$file_list"
+    [ -s "$file_list" ] || die 'no .md, .json, or .jsonl memory files found'
+    mkdir "$destination"
+    while IFS= read -r file; do
+      relative=${file#"$SOURCE"/}
+      mkdir -p "$destination/$(dirname "$relative")"
+      cp "$file" "$destination/$relative"
+    done < "$file_list"
+    rm "$file_list"
+    trap - EXIT HUP INT TERM
+  fi
+  record_import memory "$SOURCE" "raw/memories/$IMPORT_NAME"
+  printf '%s\n' 'Review imported memory for credentials or private data before committing.'
+}
+
+status_cmd() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in --root) [ "$#" -ge 2 ] || die '--root needs a value'; ROOT=$2; shift 2 ;; *) die "unknown status option: $1" ;; esac
+  done
+  absolute_root
+  require_initialized
+  wiki_root=$(config_value wiki_root)
+  source_root=$(config_value source_root)
+  pages=$(find "$ROOT/$wiki_root" -type f -name '*.md' | wc -l | tr -d ' ')
+  sources=$(awk 'NR > 1 { count++ } END { print count + 0 }' "$ROOT/.llm-wiki/sources.tsv")
+  printf 'root: %s\nname: %s\npages: %s\nsources: %s\nsource_root: %s\n' "$ROOT" "$(config_value name)" "$pages" "$sources" "$source_root"
+}
+
+command=${1:-}
+[ -n "$command" ] || { usage; exit 2; }
+shift
+case "$command" in
+  init) init_cmd "$@" ;;
+  import)
+    type=${1:-}; [ -n "$type" ] || die 'import type is required'; shift
+    [ "$#" -ge 1 ] || die 'import source is required'
+    case "$type" in document) import_document "$@" ;; repo) import_repo "$@" ;; memory) import_memory "$@" ;; *) die "unsupported import type: $type" ;; esac
+    ;;
+  status) status_cmd "$@" ;;
+  version|--version) printf '%s\n' "llm-wiki $VERSION" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command: $command" ;;
+esac
