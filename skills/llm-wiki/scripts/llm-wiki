@@ -329,7 +329,9 @@ memory_recall() {
   query_terms=$(
     {
       printf '%s' "$normalized_query" | tr -cs '[:alnum:]_-' '\n'
-      printf '%s' "$normalized_query" | tr -d '[:space:]' | cut -c1-240 | sed 's/./& /g' | awk '{ for (i = 1; i < NF; i++) print $i $(i + 1) }'
+      if LC_ALL=C printf '%s' "$normalized_query" | grep -q '[^ -~]'; then
+        printf '%s' "$normalized_query" | tr -d '[:space:]' | cut -c1-240 | sed 's/./& /g' | awk '{ for (i = 1; i < NF; i++) print $i $(i + 1) }'
+      fi
     } | awk 'length($0) >= 2 && !seen[$0]++'
   )
   find "$ROOT/wiki/memory" -type f -name '*.md' -print 2>/dev/null | while IFS= read -r file; do

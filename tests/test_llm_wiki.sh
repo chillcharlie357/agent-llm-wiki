@@ -120,8 +120,11 @@ if LLM_WIKI_CAPTURE=1 LLM_WIKI_CAPTURE_MAX_BYTES=4 LLM_WIKI_TRANSCRIPT="$TEST_RO
 fi
 hook_recall=$(printf '{"prompt":"Which legacy services use Chat Completions?"}\n' | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" prompt)
 printf '%s\n' "$hook_recall" | grep -q 'api-choice' || fail 'prompt hook did not recall memory'
+"$CLI" memory remember escaped-json --root "$vault" --content 'zxqv-after-quote-9173' --summary 'JSON parser fixture' >/dev/null
+quoted_hook_recall=$(printf '%s\n' '{"prompt":"unmatched-prefix \"quoted phrase\" zxqv-after-quote-9173"}' | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" prompt)
+printf '%s\n' "$quoted_hook_recall" | grep -q 'escaped-json' || fail 'prompt hook did not parse escaped JSON quotes'
 status=$("$CLI" status --root "$vault")
-printf '%s\n' "$status" | grep -q '^memories: 4$' || fail 'status memory count is not 4'
+printf '%s\n' "$status" | grep -q '^memories: 5$' || fail 'status memory count is not 5'
 printf '%s\n' "$status" | grep -q '^inbox: 1$' || fail 'status inbox count is not 1'
 
 install_home="$TEST_ROOT/home"
