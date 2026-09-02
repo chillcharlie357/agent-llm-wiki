@@ -1,2 +1,4 @@
 .DS_Store
 *.swp
+.llm-wiki/private-inbox/*
+!.llm-wiki/private-inbox/.gitignore

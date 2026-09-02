@@ -6,6 +6,8 @@ CLI=${LLM_WIKI_CLI:-llm-wiki}
 ROOT=${LLM_WIKI_ROOT:-.}
 EVENT=${1:-${LLM_WIKI_EVENT:-recall}}
 QUERY=${LLM_WIKI_QUERY:-}
+CAPTURE=${LLM_WIKI_CAPTURE:-0}
+CAPTURE_MAX_BYTES=${LLM_WIKI_CAPTURE_MAX_BYTES:-1048576}
 
 if [ ! -t 0 ]; then
   payload=$(cat)
@@ -18,6 +20,18 @@ extract_json_string() {
   printf '%s' "$payload" | tr '\n' ' ' | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
 }
 
+file_size() {
+  wc -c < "$1" | tr -d ' '
+}
+
+redact_stream() {
+  sed -E \
+    -e 's/("(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"[[:space:]]*:[[:space:]]*")[^"]*(")/\1[REDACTED]\3/Ig' \
+    -e 's/((api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)[[:space:]]*[:=][[:space:]]*)[^,[:space:]]+/\1[REDACTED]/Ig' \
+    -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._~+\/-]+/\1[REDACTED]/Ig' \
+    -e 's/(sk-[A-Za-z0-9_-]{12,})/[REDACTED]/g'
+}
+
 case "$EVENT" in
   recall|session-start|prompt)
     [ -n "$QUERY" ] || QUERY=$(extract_json_string prompt)
@@ -26,12 +40,20 @@ case "$EVENT" in
     "$CLI" memory recall "$QUERY" --root "$ROOT" --limit "${LLM_WIKI_RECALL_LIMIT:-5}"
     ;;
   capture|session-end)
+    if [ "$CAPTURE" != 1 ]; then
+      printf '%s\n' 'llm-wiki hook capture disabled; set LLM_WIKI_CAPTURE=1 to opt in.'
+      exit 0
+    fi
+    case "$CAPTURE_MAX_BYTES" in ''|*[!0-9]*) printf '%s\n' 'llm-wiki-hook: LLM_WIKI_CAPTURE_MAX_BYTES must be a positive integer' >&2; exit 2 ;; esac
+    [ "$CAPTURE_MAX_BYTES" -gt 0 ] || { printf '%s\n' 'llm-wiki-hook: LLM_WIKI_CAPTURE_MAX_BYTES must be a positive integer' >&2; exit 2; }
     transcript=${LLM_WIKI_TRANSCRIPT:-}
     [ -n "$transcript" ] || transcript=$(extract_json_string transcript_path)
     if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-      "$CLI" memory inbox "$transcript" --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
+      [ "$(file_size "$transcript")" -le "$CAPTURE_MAX_BYTES" ] || { printf '%s\n' 'llm-wiki-hook: transcript exceeds capture limit' >&2; exit 1; }
+      redact_stream < "$transcript" | "$CLI" memory inbox - --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
     elif [ -n "$payload" ]; then
-      printf '%s\n' "$payload" | "$CLI" memory inbox - --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
+      [ "$(printf '%s' "$payload" | wc -c | tr -d ' ')" -le "$CAPTURE_MAX_BYTES" ] || { printf '%s\n' 'llm-wiki-hook: payload exceeds capture limit' >&2; exit 1; }
+      printf '%s\n' "$payload" | redact_stream | "$CLI" memory inbox - --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
     fi
     ;;
   *)

@@ -42,8 +42,9 @@ MyWiki/
 │   ├── documents/
 │   ├── repositories/
 │   ├── memories/
-│   └── memory-inbox/        # Hook 捕获、等待审核的候选记忆
-└── .llm-wiki/sources.tsv    # 来源登记表
+└── .llm-wiki/
+    ├── sources.tsv          # 来源登记表
+    └── private-inbox/       # Hook 捕获、Git 默认忽略的候选记忆
 ```
 
 已有 `AGENTS.md` 会保留原文，只追加带标记的 Wiki 维护规则。
@@ -100,11 +101,12 @@ LLM_WIKI_ROOT=~/Knowledge/MyWiki llm-wiki-hook prompt
 
 # 会话结束时，把 transcript 放入待审核 inbox
 LLM_WIKI_ROOT=~/Knowledge/MyWiki \
+LLM_WIKI_CAPTURE=1 \
 LLM_WIKI_TRANSCRIPT=/path/to/session.jsonl \
 llm-wiki-hook session-end
 ```
 
-Hook 不会把整段对话直接写进长期记忆。它只把候选内容放入 `raw/memory-inbox/`，再由 `llm-wiki` Skill 清理隐私、判断是否值得保留，并调用 `memory remember` 或 `memory update`。这样可以避免临时对话、误判和密钥污染 Wiki。
+会话捕获默认关闭，只有显式设置 `LLM_WIKI_CAPTURE=1` 才启用。Hook 会限制输入大小、脱敏常见凭证，并以 `0600` 权限写入 Git 默认忽略的 `.llm-wiki/private-inbox/`。它不会把原始对话直接升级为长期记忆；`llm-wiki` Skill 仍需审核候选内容，再调用 `memory remember` 或 `memory update`。
 
 Claude Code 的完整 Hook 配置，以及 Codex、Trae、OpenCode、Pi 的通用适配协议，见 `skills/llm-wiki/references/hooks.md`。
 

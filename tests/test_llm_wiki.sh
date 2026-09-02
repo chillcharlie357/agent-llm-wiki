@@ -27,7 +27,7 @@ printf 'custom index\n' > "$vault/wiki/index.md"
 "$CLI" init --root "$vault" --name "Team Brain 2" --force >/dev/null
 assert_contains "$vault/wiki/index.md" 'custom index'
 assert_contains "$vault/LLM-WIKI.md" '# Team Brain 2 schema'
-rm -rf "$vault/wiki/memory" "$vault/raw/memory-inbox"
+rm -rf "$vault/wiki/memory" "$vault/.llm-wiki/private-inbox"
 
 printf '# External document\n' > "$TEST_ROOT/document.md"
 "$CLI" import document "$TEST_ROOT/document.md" --root "$vault"
@@ -64,7 +64,7 @@ printf '%s\n' "$status" | grep -q '^sources: 4$' || fail 'source count is not 4'
 
 "$CLI" memory remember api-choice --root "$vault" --content 'Use the Responses API for new services.' --summary 'Project API choice' --topics 'project,decision'
 assert_file "$vault/wiki/memory/api-choice.md"
-assert_dir "$vault/raw/memory-inbox"
+assert_dir "$vault/.llm-wiki/private-inbox"
 assert_contains "$vault/wiki/memory/api-choice.md" 'Use the Responses API for new services.'
 if "$CLI" memory remember api-choice --root "$vault" --content duplicate >/dev/null 2>&1; then
   fail 'remember overwrote an existing memory'
@@ -84,11 +84,22 @@ list=$("$CLI" memory list --root "$vault")
 printf '%s\n' "$list" | grep -q '^api-choice$' || fail 'memory list missed api-choice'
 
 transcript="$TEST_ROOT/session.jsonl"
-printf '{"role":"user","content":"remember this candidate"}\n' > "$transcript"
-hook_capture=$(printf '{"transcript_path":"%s"}\n' "$transcript" | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" session-end)
+printf '{"role":"user","content":"remember this candidate","token":"secret-value"}\n' > "$transcript"
+capture_disabled=$(printf '{"transcript_path":"%s"}\n' "$transcript" | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" session-end)
+printf '%s\n' "$capture_disabled" | grep -q 'capture disabled' || fail 'session capture was not opt-in'
+[ "$(find "$vault/.llm-wiki/private-inbox" -type f ! -name .gitignore | wc -l | tr -d ' ')" -eq 0 ] || fail 'disabled hook captured a transcript'
+hook_capture=$(printf '{"transcript_path":"%s"}\n' "$transcript" | LLM_WIKI_CAPTURE=1 LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" session-end)
 inbox_relative=$(printf '%s\n' "$hook_capture" | sed -n 's/^Captured memory candidate: //p')
 assert_file "$vault/$inbox_relative"
 assert_contains "$vault/$inbox_relative" 'remember this candidate'
+assert_contains "$vault/$inbox_relative" '[REDACTED]'
+if grep -Fq 'secret-value' "$vault/$inbox_relative"; then fail 'hook capture persisted a secret'; fi
+permissions=$(stat -f '%Lp' "$vault/$inbox_relative" 2>/dev/null || stat -c '%a' "$vault/$inbox_relative")
+[ "$permissions" = 600 ] || fail "inbox permissions are $permissions, expected 600"
+printf 'oversized' > "$TEST_ROOT/oversized.jsonl"
+if LLM_WIKI_CAPTURE=1 LLM_WIKI_CAPTURE_MAX_BYTES=4 LLM_WIKI_TRANSCRIPT="$TEST_ROOT/oversized.jsonl" LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" session-end >/dev/null 2>&1; then
+  fail 'hook captured an oversized transcript'
+fi
 hook_recall=$(printf '{"prompt":"Which legacy services use Chat Completions?"}\n' | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" prompt)
 printf '%s\n' "$hook_recall" | grep -q 'api-choice' || fail 'prompt hook did not recall memory'
 status=$("$CLI" status --root "$vault")

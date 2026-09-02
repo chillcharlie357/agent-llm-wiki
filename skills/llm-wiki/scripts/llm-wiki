@@ -52,7 +52,8 @@ require_initialized() {
 }
 
 ensure_memory_dirs() {
-  mkdir -p "$ROOT/wiki/memory" "$ROOT/raw/memory-inbox"
+  mkdir -p "$ROOT/wiki/memory" "$ROOT/.llm-wiki/private-inbox"
+  [ -f "$ROOT/.llm-wiki/private-inbox/.gitignore" ] || printf '*\n!.gitignore\n' > "$ROOT/.llm-wiki/private-inbox/.gitignore"
 }
 
 validate_registry_field() {
@@ -108,7 +109,8 @@ init_cmd() {
   if [ -e "$ROOT/LLM-WIKI.md" ] && [ "$FORCE" -ne 1 ]; then
     die "LLM-WIKI.md already exists; use --force only when replacement is intended"
   fi
-  mkdir -p "$ROOT/.llm-wiki" "$ROOT/wiki/memory" "$ROOT/raw/documents" "$ROOT/raw/repositories" "$ROOT/raw/memories" "$ROOT/raw/memory-inbox"
+  mkdir -p "$ROOT/.llm-wiki" "$ROOT/wiki/memory" "$ROOT/raw/documents" "$ROOT/raw/repositories" "$ROOT/raw/memories"
+  ensure_memory_dirs
   today=$(date +%F)
   cat > "$ROOT/.llm-wiki/config" <<EOF
 version=$VERSION
@@ -131,7 +133,7 @@ $PURPOSE
 - \`wiki/\` contains curated, reusable knowledge.
 - \`raw/\` contains immutable copies of imported source material.
 - \`wiki/memory/\` contains reviewed long-term memories.
-- \`raw/memory-inbox/\` contains hook-captured candidates awaiting review.
+- \`.llm-wiki/private-inbox/\` contains private hook-captured candidates awaiting review and is ignored by Git.
 - \`.llm-wiki/sources.tsv\` records source provenance.
 - Preferred language: $LANGUAGE.
 - Topic areas: $AREAS.
@@ -353,14 +355,18 @@ memory_inbox() {
   require_initialized
   ensure_memory_dirs
   validate_registry_field source "$source_label"
-  mkdir -p "$ROOT/raw/memory-inbox"
+  ensure_memory_dirs
   stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-  target="$ROOT/raw/memory-inbox/$stamp-$$.md"
+  target="$ROOT/.llm-wiki/private-inbox/$stamp-$$.md"
+  old_umask=$(umask)
+  umask 077
   {
     printf '%s\n' '---' "source: $source_label" "captured_at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" 'status: pending' '---' ''
     if [ "$inbox_source" = - ]; then cat; else [ -f "$inbox_source" ] || die "inbox source not found: $inbox_source"; cat "$inbox_source"; fi
   } > "$target"
-  printf 'Captured memory candidate: %s\n' "raw/memory-inbox/$(basename "$target")"
+  chmod 600 "$target"
+  umask "$old_umask"
+  printf 'Captured memory candidate: %s\n' ".llm-wiki/private-inbox/$(basename "$target")"
 }
 
 memory_list() {
@@ -487,7 +493,7 @@ status_cmd() {
   pages=$(find "$ROOT/$wiki_root" -type f -name '*.md' | wc -l | tr -d ' ')
   sources=$(awk 'NR > 1 { count++ } END { print count + 0 }' "$ROOT/.llm-wiki/sources.tsv")
   memories=$(find "$ROOT/wiki/memory" -type f -name '*.md' | wc -l | tr -d ' ')
-  inbox=$(find "$ROOT/raw/memory-inbox" -type f -name '*.md' | wc -l | tr -d ' ')
+  inbox=$(find "$ROOT/.llm-wiki/private-inbox" -type f -name '*.md' | wc -l | tr -d ' ')
   printf 'root: %s\nname: %s\npages: %s\nmemories: %s\ninbox: %s\nsources: %s\nsource_root: %s\n' "$ROOT" "$(config_value name)" "$pages" "$memories" "$inbox" "$sources" "$source_root"
 }
 
