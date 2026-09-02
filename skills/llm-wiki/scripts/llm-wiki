@@ -245,6 +245,12 @@ memory_write() {
   absolute_root
   require_initialized
   ensure_memory_dirs
+  lock_dir="$ROOT/.llm-wiki/memory-locks/$memory_name.lock"
+  mkdir -p "$ROOT/.llm-wiki/memory-locks"
+  mkdir "$lock_dir" 2>/dev/null || die "memory is being modified: $memory_name"
+  target=''
+  temp_target=''
+  trap 'rm -f "$temp_target"; rmdir "$lock_dir" 2>/dev/null || true' EXIT HUP INT TERM
   [ -z "$content" ] || [ -z "$content_file" ] || die 'use either --content or --file, not both'
   if [ -n "$content_file" ]; then
     [ -f "$content_file" ] || die "content file not found: $content_file"
@@ -269,7 +275,8 @@ memory_write() {
   yaml_memory_name=$(yaml_escape "$memory_name")
   yaml_summary=$(yaml_escape "$summary")
   yaml_topics=$(printf '%s' "$topics" | sed 's/[[:space:]]*,[[:space:]]*/, /g; s/[^[:alnum:]_., -]//g')
-  cat > "$target" <<EOF
+  temp_target="$ROOT/wiki/memory/.$memory_name.$$.tmp"
+  cat > "$temp_target" <<EOF
 ---
 title: "$yaml_memory_name"
 summary: "$yaml_summary"
@@ -285,8 +292,13 @@ updated: $(date +%F)
 
 $content
 EOF
+  mv "$temp_target" "$target"
+  temp_target=''
   case "$mode" in remember) verb=Remembered ;; update) verb=Updated ;; esac
   printf '\n## %s\n\n- %s long-term memory: \`wiki/memory/%s.md\`.\n' "$(date +%F)" "$verb" "$memory_name" >> "$ROOT/wiki/log.md"
+  rmdir "$lock_dir"
+  lock_dir=''
+  trap - EXIT HUP INT TERM
   printf '%s memory: %s\n' "$verb" "wiki/memory/$memory_name.md"
 }
 

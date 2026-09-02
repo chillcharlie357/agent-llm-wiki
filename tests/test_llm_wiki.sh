@@ -69,6 +69,17 @@ assert_contains "$vault/wiki/memory/api-choice.md" 'Use the Responses API for ne
 if "$CLI" memory remember api-choice --root "$vault" --content duplicate >/dev/null 2>&1; then
   fail 'remember overwrote an existing memory'
 fi
+set +e
+"$CLI" memory remember concurrent --root "$vault" --content alpha --summary alpha >/dev/null 2>&1 &
+pid_a=$!
+"$CLI" memory remember concurrent --root "$vault" --content beta --summary beta >/dev/null 2>&1 &
+pid_b=$!
+wait "$pid_a"; status_a=$?
+wait "$pid_b"; status_b=$?
+set -e
+[ $((status_a + status_b)) -ne 0 ] || fail 'both concurrent remember commands succeeded'
+[ "$status_a" -eq 0 ] || [ "$status_b" -eq 0 ] || fail 'both concurrent remember commands failed'
+assert_file "$vault/wiki/memory/concurrent.md"
 created=$(sed -n 's/^created: //p' "$vault/wiki/memory/api-choice.md")
 "$CLI" memory update api-choice --root "$vault" --content 'Use Responses API by default; keep Chat Completions for legacy services.'
 assert_contains "$vault/wiki/memory/api-choice.md" 'keep Chat Completions for legacy services.'
@@ -103,7 +114,7 @@ fi
 hook_recall=$(printf '{"prompt":"Which legacy services use Chat Completions?"}\n' | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" prompt)
 printf '%s\n' "$hook_recall" | grep -q 'api-choice' || fail 'prompt hook did not recall memory'
 status=$("$CLI" status --root "$vault")
-printf '%s\n' "$status" | grep -q '^memories: 2$' || fail 'status memory count is not 2'
+printf '%s\n' "$status" | grep -q '^memories: 3$' || fail 'status memory count is not 3'
 printf '%s\n' "$status" | grep -q '^inbox: 1$' || fail 'status inbox count is not 1'
 
 install_home="$TEST_ROOT/home"
