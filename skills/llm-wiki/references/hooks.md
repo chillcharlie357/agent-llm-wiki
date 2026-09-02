@@ -24,6 +24,7 @@ Environment variables:
 - `LLM_WIKI_TRANSCRIPT`: transcript file to capture.
 - `LLM_WIKI_SOURCE`: provenance label for an inbox item.
 - `LLM_WIKI_RECALL_LIMIT`: maximum recall results; default `5`.
+- `LLM_WIKI_RECALL_MAX_BYTES`: total recall output budget; default `8192`.
 
 The adapter understands the common JSON string fields `prompt`, `cwd`, and `transcript_path`. Harness plugins may set the environment variables directly when their event schema differs.
 

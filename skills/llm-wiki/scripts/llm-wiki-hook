@@ -37,7 +37,7 @@ case "$EVENT" in
     [ -n "$QUERY" ] || QUERY=$(extract_json_string prompt)
     [ -n "$QUERY" ] || QUERY=$(extract_json_string cwd)
     [ -n "$QUERY" ] || QUERY=${PWD##*/}
-    "$CLI" memory recall "$QUERY" --root "$ROOT" --limit "${LLM_WIKI_RECALL_LIMIT:-5}"
+    "$CLI" memory recall "$QUERY" --root "$ROOT" --limit "${LLM_WIKI_RECALL_LIMIT:-5}" --max-bytes "${LLM_WIKI_RECALL_MAX_BYTES:-8192}"
     ;;
   capture|session-end)
     if [ "$CAPTURE" != 1 ]; then

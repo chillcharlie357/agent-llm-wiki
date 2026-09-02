@@ -17,7 +17,7 @@ Usage:
                            [--summary TEXT] [--topics CSV]
   llm-wiki memory update NAME [--root DIR] [--content TEXT | --file FILE]
                          [--summary TEXT] [--topics CSV]
-  llm-wiki memory recall QUERY [--root DIR] [--limit N]
+  llm-wiki memory recall QUERY [--root DIR] [--limit N] [--max-bytes N]
   llm-wiki memory inbox SOURCE [--root DIR] [--source LABEL]
   llm-wiki memory list [--root DIR]
   llm-wiki status [--root DIR]
@@ -307,15 +307,19 @@ memory_recall() {
   query=$1
   shift
   limit=5
+  max_bytes=16384
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --root) [ "$#" -ge 2 ] || die '--root needs a value'; ROOT=$2; shift 2 ;;
       --limit) [ "$#" -ge 2 ] || die '--limit needs a value'; limit=$2; shift 2 ;;
+      --max-bytes) [ "$#" -ge 2 ] || die '--max-bytes needs a value'; max_bytes=$2; shift 2 ;;
       *) die "unknown memory recall option: $1" ;;
     esac
   done
   case "$limit" in ''|*[!0-9]*) die '--limit must be a positive integer' ;; esac
   [ "$limit" -gt 0 ] || die '--limit must be a positive integer'
+  case "$max_bytes" in ''|*[!0-9]*) die '--max-bytes must be a positive integer' ;; esac
+  [ "$max_bytes" -gt 0 ] || die '--max-bytes must be a positive integer'
   absolute_root
   require_initialized
   ensure_memory_dirs
@@ -340,11 +344,34 @@ memory_recall() {
     [ "$score" -gt 0 ] && printf '%08d\t%s\n' "$score" "$file"
   done | sort -rn > "$matches"
   count=0
+  used_bytes=0
   while IFS="$(printf '\t')" read -r score file; do
     [ -n "$file" ] || continue
     count=$((count + 1))
-    printf '\n## %s\n\n' "$(basename "$file" .md)"
-    sed -n '/^---$/,/^---$/d; /^# /d; p' "$file" | sed '/^[[:space:]]*$/d'
+    heading=$(printf '\n## %s\n\n' "$(basename "$file" .md)")
+    remaining=$((max_bytes - used_bytes))
+    [ "$remaining" -gt 0 ] || break
+    heading_bytes=$(printf '%s' "$heading" | wc -c | tr -d ' ')
+    [ "$heading_bytes" -lt "$remaining" ] || break
+    printf '%s' "$heading"
+    used_bytes=$((used_bytes + heading_bytes))
+    remaining=$((max_bytes - used_bytes))
+    body_file=$(mktemp "${TMPDIR:-/tmp}/llm-wiki-body.XXXXXX")
+    sed -n '/^---$/,/^---$/d; /^# /d; p' "$file" | sed '/^[[:space:]]*$/d' > "$body_file"
+    body_bytes=$(wc -c < "$body_file" | tr -d ' ')
+    if [ "$body_bytes" -le "$remaining" ]; then
+      cat "$body_file"
+      used_bytes=$((used_bytes + body_bytes))
+    else
+      marker="\n[truncated at $max_bytes bytes]\n"
+      marker_bytes=$(printf '%b' "$marker" | wc -c | tr -d ' ')
+      content_budget=$((remaining - marker_bytes))
+      [ "$content_budget" -gt 0 ] && head -c "$content_budget" "$body_file" || true
+      printf '%b' "$marker"
+      rm "$body_file"
+      break
+    fi
+    rm "$body_file"
     [ "$count" -ge "$limit" ] && break
   done < "$matches"
   rm "$matches"

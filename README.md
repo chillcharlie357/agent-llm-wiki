@@ -87,7 +87,7 @@ llm-wiki memory update api-choice \
   --content "项目默认使用 Responses API，旧服务暂时保留 Chat Completions。"
 
 # 根据当前问题召回相关记忆
-llm-wiki memory recall "项目 API 选型" --root ~/Knowledge/MyWiki --limit 5
+llm-wiki memory recall "项目 API 选型" --root ~/Knowledge/MyWiki --limit 5 --max-bytes 16384
 ```
 
 ## 通过 Hook 自动捕获和召回

@@ -91,6 +91,13 @@ printf '%s\n' "$recall" | grep -q 'api-choice' || fail 'memory recall missed an 
 "$CLI" memory remember chinese-memory --root "$vault" --content '项目统一使用事件驱动架构。' --summary '架构决策'
 recall_zh=$("$CLI" memory recall '项目应该使用什么事件驱动架构？' --root "$vault")
 printf '%s\n' "$recall_zh" | grep -q 'chinese-memory' || fail 'memory recall missed a Chinese query'
+large_file="$TEST_ROOT/large-memory.md"
+head -c 200000 /dev/zero | tr '\0' x > "$large_file"
+printf '\nneedle-at-end\n' >> "$large_file"
+"$CLI" memory remember large-memory --root "$vault" --file "$large_file" --summary 'Large recall fixture' >/dev/null
+limited_recall=$("$CLI" memory recall 'needle-at-end' --root "$vault" --max-bytes 4096)
+[ "$(printf '%s' "$limited_recall" | wc -c | tr -d ' ')" -le 4300 ] || fail 'memory recall exceeded the byte budget'
+printf '%s\n' "$limited_recall" | grep -q '[truncated at 4096 bytes]' || fail 'truncated recall was not marked'
 list=$("$CLI" memory list --root "$vault")
 printf '%s\n' "$list" | grep -q '^api-choice$' || fail 'memory list missed api-choice'
 
@@ -114,7 +121,7 @@ fi
 hook_recall=$(printf '{"prompt":"Which legacy services use Chat Completions?"}\n' | LLM_WIKI_CLI="$CLI" LLM_WIKI_ROOT="$vault" "$HOOK" prompt)
 printf '%s\n' "$hook_recall" | grep -q 'api-choice' || fail 'prompt hook did not recall memory'
 status=$("$CLI" status --root "$vault")
-printf '%s\n' "$status" | grep -q '^memories: 3$' || fail 'status memory count is not 3'
+printf '%s\n' "$status" | grep -q '^memories: 4$' || fail 'status memory count is not 4'
 printf '%s\n' "$status" | grep -q '^inbox: 1$' || fail 'status inbox count is not 1'
 
 install_home="$TEST_ROOT/home"
