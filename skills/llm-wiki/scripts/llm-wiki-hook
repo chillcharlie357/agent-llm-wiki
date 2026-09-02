@@ -1,0 +1,41 @@
+#!/bin/sh
+# llm-wiki-hook
+set -eu
+
+CLI=${LLM_WIKI_CLI:-llm-wiki}
+ROOT=${LLM_WIKI_ROOT:-.}
+EVENT=${1:-${LLM_WIKI_EVENT:-recall}}
+QUERY=${LLM_WIKI_QUERY:-}
+
+if [ ! -t 0 ]; then
+  payload=$(cat)
+else
+  payload=''
+fi
+
+extract_json_string() {
+  key=$1
+  printf '%s' "$payload" | tr '\n' ' ' | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+}
+
+case "$EVENT" in
+  recall|session-start|prompt)
+    [ -n "$QUERY" ] || QUERY=$(extract_json_string prompt)
+    [ -n "$QUERY" ] || QUERY=$(extract_json_string cwd)
+    [ -n "$QUERY" ] || QUERY=${PWD##*/}
+    "$CLI" memory recall "$QUERY" --root "$ROOT" --limit "${LLM_WIKI_RECALL_LIMIT:-5}"
+    ;;
+  capture|session-end)
+    transcript=${LLM_WIKI_TRANSCRIPT:-}
+    [ -n "$transcript" ] || transcript=$(extract_json_string transcript_path)
+    if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+      "$CLI" memory inbox "$transcript" --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
+    elif [ -n "$payload" ]; then
+      printf '%s\n' "$payload" | "$CLI" memory inbox - --root "$ROOT" --source "${LLM_WIKI_SOURCE:-hook:$EVENT}"
+    fi
+    ;;
+  *)
+    printf 'llm-wiki-hook: unsupported event: %s\n' "$EVENT" >&2
+    exit 2
+    ;;
+esac

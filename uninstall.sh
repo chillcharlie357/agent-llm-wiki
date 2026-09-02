@@ -50,3 +50,7 @@ if [ -f "$BIN_DIR/llm-wiki" ] && grep -q '^# llm-wiki-cli$' "$BIN_DIR/llm-wiki";
   rm "$BIN_DIR/llm-wiki"
   printf 'Removed: %s\n' "$BIN_DIR/llm-wiki"
 fi
+if [ -f "$BIN_DIR/llm-wiki-hook" ] && grep -q '^# llm-wiki-hook$' "$BIN_DIR/llm-wiki-hook"; then
+  rm "$BIN_DIR/llm-wiki-hook"
+  printf 'Removed: %s\n' "$BIN_DIR/llm-wiki-hook"
+fi
