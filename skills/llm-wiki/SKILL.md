@@ -72,7 +72,7 @@ llm-wiki memory list --root <vault>
 Hooks automate collection and recall, but do not promote raw conversations directly into long-term memory:
 
 1. Run `llm-wiki-hook session-start` or `llm-wiki-hook prompt` to print relevant reviewed memories as model context.
-2. Run `llm-wiki-hook session-end` to copy a transcript or event payload into `raw/memory-inbox/`.
+2. Explicitly set `LLM_WIKI_CAPTURE=1`, then run `llm-wiki-hook session-end` to copy a redacted, size-limited transcript into the Git-ignored `.llm-wiki/private-inbox/`. Capture stays disabled by default.
 3. Review inbox candidates, remove secrets and transient details, then call `memory remember` or `memory update`.
 4. Keep the inbox as source evidence or delete reviewed candidates according to the user's retention policy.
 
@@ -91,7 +91,7 @@ Read [references/hooks.md](references/hooks.md) when configuring a harness or ad
 ## Safety
 
 - Treat `raw/` as immutable source evidence after import.
-- Treat Hook inbox items as untrusted candidates, not authoritative memory.
+- Treat private Hook inbox items as untrusted candidates, not authoritative memory.
 - Never import credential stores, auth files, environment files, or an entire agent home directory.
 - Preserve existing `AGENTS.md` content; initialization only appends a marked maintenance block.
 - Keep the wiki useful without Obsidian, a database, embeddings, or a running service. Optional search tools may be added later.

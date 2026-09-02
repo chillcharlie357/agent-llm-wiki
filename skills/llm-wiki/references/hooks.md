@@ -19,9 +19,12 @@ Environment variables:
 
 - `LLM_WIKI_ROOT`: initialized Wiki directory.
 - `LLM_WIKI_QUERY`: explicit recall query.
+- `LLM_WIKI_CAPTURE`: set to `1` to opt into transcript capture; disabled by default.
+- `LLM_WIKI_CAPTURE_MAX_BYTES`: maximum captured bytes; default `1048576`.
 - `LLM_WIKI_TRANSCRIPT`: transcript file to capture.
 - `LLM_WIKI_SOURCE`: provenance label for an inbox item.
 - `LLM_WIKI_RECALL_LIMIT`: maximum recall results; default `5`.
+- `LLM_WIKI_RECALL_MAX_BYTES`: total recall output budget; default `8192`.
 
 The adapter understands the common JSON string fields `prompt`, `cwd`, and `transcript_path`. Harness plugins may set the environment variables directly when their event schema differs.
 
@@ -57,7 +60,7 @@ Add command hooks to the project's `.claude/settings.json`, replacing `/path/to/
         "hooks": [
           {
             "type": "command",
-            "command": "LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook session-end"
+            "command": "LLM_WIKI_CAPTURE=1 LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook session-end"
           }
         ]
       }
@@ -66,7 +69,7 @@ Add command hooks to the project's `.claude/settings.json`, replacing `/path/to/
 }
 ```
 
-`SessionStart` and `UserPromptSubmit` stdout is available to Claude as context. `SessionEnd` sends `transcript_path`; the adapter copies that file to the review inbox.
+`SessionStart` and `UserPromptSubmit` stdout is available to Claude as context. `SessionEnd` sends `transcript_path`; when capture is explicitly enabled, the adapter size-checks and redacts it before writing a private `0600` inbox file.
 
 ## Codex, Trae, OpenCode, and Pi
 
@@ -76,6 +79,6 @@ Use the harness lifecycle surface to call the same adapter:
 | --- | --- |
 | Session starts | `LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook session-start` |
 | User prompt submitted | `LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook prompt` |
-| Session ends | `LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook session-end` |
+| Session ends | `LLM_WIKI_CAPTURE=1 LLM_WIKI_ROOT=/path/to/wiki llm-wiki-hook session-end` |
 
 For harnesses whose hook API is a TypeScript plugin or extension, spawn this command, forward the event JSON to stdin, and add recall stdout to the model context. Do not write long-term pages directly from the lifecycle callback; capture to the inbox and let the `llm-wiki` Skill review it.

@@ -17,7 +17,7 @@ Usage:
                            [--summary TEXT] [--topics CSV]
   llm-wiki memory update NAME [--root DIR] [--content TEXT | --file FILE]
                          [--summary TEXT] [--topics CSV]
-  llm-wiki memory recall QUERY [--root DIR] [--limit N]
+  llm-wiki memory recall QUERY [--root DIR] [--limit N] [--max-bytes N]
   llm-wiki memory inbox SOURCE [--root DIR] [--source LABEL]
   llm-wiki memory list [--root DIR]
   llm-wiki status [--root DIR]
@@ -52,7 +52,8 @@ require_initialized() {
 }
 
 ensure_memory_dirs() {
-  mkdir -p "$ROOT/wiki/memory" "$ROOT/raw/memory-inbox"
+  mkdir -p "$ROOT/wiki/memory" "$ROOT/.llm-wiki/private-inbox"
+  [ -f "$ROOT/.llm-wiki/private-inbox/.gitignore" ] || printf '*\n!.gitignore\n' > "$ROOT/.llm-wiki/private-inbox/.gitignore"
 }
 
 validate_registry_field() {
@@ -74,7 +75,7 @@ append_agents_block() {
 - Keep imported source material immutable under `raw/`.
 - Put durable, reusable knowledge under `wiki/` with the configured frontmatter.
 - Recall relevant files from `wiki/memory/` before work that depends on prior context.
-- Treat `raw/memory-inbox/` as untrusted Hook candidates; review before remembering.
+- Treat `.llm-wiki/private-inbox/` as untrusted Hook candidates; review before remembering.
 - Preserve source traceability and update `wiki/index.md` plus `wiki/log.md` when structure changes.
 <!-- LLM-WIKI:END -->
 EOF
@@ -108,7 +109,8 @@ init_cmd() {
   if [ -e "$ROOT/LLM-WIKI.md" ] && [ "$FORCE" -ne 1 ]; then
     die "LLM-WIKI.md already exists; use --force only when replacement is intended"
   fi
-  mkdir -p "$ROOT/.llm-wiki" "$ROOT/wiki/memory" "$ROOT/raw/documents" "$ROOT/raw/repositories" "$ROOT/raw/memories" "$ROOT/raw/memory-inbox"
+  mkdir -p "$ROOT/.llm-wiki" "$ROOT/wiki/memory" "$ROOT/raw/documents" "$ROOT/raw/repositories" "$ROOT/raw/memories"
+  ensure_memory_dirs
   today=$(date +%F)
   cat > "$ROOT/.llm-wiki/config" <<EOF
 version=$VERSION
@@ -131,7 +133,7 @@ $PURPOSE
 - \`wiki/\` contains curated, reusable knowledge.
 - \`raw/\` contains immutable copies of imported source material.
 - \`wiki/memory/\` contains reviewed long-term memories.
-- \`raw/memory-inbox/\` contains hook-captured candidates awaiting review.
+- \`.llm-wiki/private-inbox/\` contains private hook-captured candidates awaiting review and is ignored by Git.
 - \`.llm-wiki/sources.tsv\` records source provenance.
 - Preferred language: $LANGUAGE.
 - Topic areas: $AREAS.
@@ -243,6 +245,12 @@ memory_write() {
   absolute_root
   require_initialized
   ensure_memory_dirs
+  lock_dir="$ROOT/.llm-wiki/memory-locks/$memory_name.lock"
+  mkdir -p "$ROOT/.llm-wiki/memory-locks"
+  mkdir "$lock_dir" 2>/dev/null || die "memory is being modified: $memory_name"
+  target=''
+  temp_target=''
+  trap 'rm -f "$temp_target"; rmdir "$lock_dir" 2>/dev/null || true' EXIT HUP INT TERM
   [ -z "$content" ] || [ -z "$content_file" ] || die 'use either --content or --file, not both'
   if [ -n "$content_file" ]; then
     [ -f "$content_file" ] || die "content file not found: $content_file"
@@ -267,7 +275,8 @@ memory_write() {
   yaml_memory_name=$(yaml_escape "$memory_name")
   yaml_summary=$(yaml_escape "$summary")
   yaml_topics=$(printf '%s' "$topics" | sed 's/[[:space:]]*,[[:space:]]*/, /g; s/[^[:alnum:]_., -]//g')
-  cat > "$target" <<EOF
+  temp_target="$ROOT/wiki/memory/.$memory_name.$$.tmp"
+  cat > "$temp_target" <<EOF
 ---
 title: "$yaml_memory_name"
 summary: "$yaml_summary"
@@ -283,8 +292,13 @@ updated: $(date +%F)
 
 $content
 EOF
+  mv "$temp_target" "$target"
+  temp_target=''
   case "$mode" in remember) verb=Remembered ;; update) verb=Updated ;; esac
   printf '\n## %s\n\n- %s long-term memory: \`wiki/memory/%s.md\`.\n' "$(date +%F)" "$verb" "$memory_name" >> "$ROOT/wiki/log.md"
+  rmdir "$lock_dir"
+  lock_dir=''
+  trap - EXIT HUP INT TERM
   printf '%s memory: %s\n' "$verb" "wiki/memory/$memory_name.md"
 }
 
@@ -293,15 +307,19 @@ memory_recall() {
   query=$1
   shift
   limit=5
+  max_bytes=16384
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --root) [ "$#" -ge 2 ] || die '--root needs a value'; ROOT=$2; shift 2 ;;
       --limit) [ "$#" -ge 2 ] || die '--limit needs a value'; limit=$2; shift 2 ;;
+      --max-bytes) [ "$#" -ge 2 ] || die '--max-bytes needs a value'; max_bytes=$2; shift 2 ;;
       *) die "unknown memory recall option: $1" ;;
     esac
   done
   case "$limit" in ''|*[!0-9]*) die '--limit must be a positive integer' ;; esac
   [ "$limit" -gt 0 ] || die '--limit must be a positive integer'
+  case "$max_bytes" in ''|*[!0-9]*) die '--max-bytes must be a positive integer' ;; esac
+  [ "$max_bytes" -gt 0 ] || die '--max-bytes must be a positive integer'
   absolute_root
   require_initialized
   ensure_memory_dirs
@@ -311,7 +329,9 @@ memory_recall() {
   query_terms=$(
     {
       printf '%s' "$normalized_query" | tr -cs '[:alnum:]_-' '\n'
-      printf '%s' "$normalized_query" | tr -d '[:space:]' | cut -c1-240 | sed 's/./& /g' | awk '{ for (i = 1; i < NF; i++) print $i $(i + 1) }'
+      if LC_ALL=C printf '%s' "$normalized_query" | grep -q '[^ -~]'; then
+        printf '%s' "$normalized_query" | tr -d '[:space:]' | cut -c1-240 | sed 's/./& /g' | awk '{ for (i = 1; i < NF; i++) print $i $(i + 1) }'
+      fi
     } | awk 'length($0) >= 2 && !seen[$0]++'
   )
   find "$ROOT/wiki/memory" -type f -name '*.md' -print 2>/dev/null | while IFS= read -r file; do
@@ -326,11 +346,34 @@ memory_recall() {
     [ "$score" -gt 0 ] && printf '%08d\t%s\n' "$score" "$file"
   done | sort -rn > "$matches"
   count=0
+  used_bytes=0
   while IFS="$(printf '\t')" read -r score file; do
     [ -n "$file" ] || continue
     count=$((count + 1))
-    printf '\n## %s\n\n' "$(basename "$file" .md)"
-    sed -n '/^---$/,/^---$/d; /^# /d; p' "$file" | sed '/^[[:space:]]*$/d'
+    heading=$(printf '\n## %s\n\n' "$(basename "$file" .md)")
+    remaining=$((max_bytes - used_bytes))
+    [ "$remaining" -gt 0 ] || break
+    heading_bytes=$(printf '%s' "$heading" | wc -c | tr -d ' ')
+    [ "$heading_bytes" -lt "$remaining" ] || break
+    printf '%s' "$heading"
+    used_bytes=$((used_bytes + heading_bytes))
+    remaining=$((max_bytes - used_bytes))
+    body_file=$(mktemp "${TMPDIR:-/tmp}/llm-wiki-body.XXXXXX")
+    sed -n '/^---$/,/^---$/d; /^# /d; p' "$file" | sed '/^[[:space:]]*$/d' > "$body_file"
+    body_bytes=$(wc -c < "$body_file" | tr -d ' ')
+    if [ "$body_bytes" -le "$remaining" ]; then
+      cat "$body_file"
+      used_bytes=$((used_bytes + body_bytes))
+    else
+      marker="\n[truncated at $max_bytes bytes]\n"
+      marker_bytes=$(printf '%b' "$marker" | wc -c | tr -d ' ')
+      content_budget=$((remaining - marker_bytes))
+      [ "$content_budget" -gt 0 ] && head -c "$content_budget" "$body_file" || true
+      printf '%b' "$marker"
+      rm "$body_file"
+      break
+    fi
+    rm "$body_file"
     [ "$count" -ge "$limit" ] && break
   done < "$matches"
   rm "$matches"
@@ -353,14 +396,18 @@ memory_inbox() {
   require_initialized
   ensure_memory_dirs
   validate_registry_field source "$source_label"
-  mkdir -p "$ROOT/raw/memory-inbox"
+  ensure_memory_dirs
   stamp=$(date -u '+%Y%m%dT%H%M%SZ')
-  target="$ROOT/raw/memory-inbox/$stamp-$$.md"
+  target="$ROOT/.llm-wiki/private-inbox/$stamp-$$.md"
+  old_umask=$(umask)
+  umask 077
   {
     printf '%s\n' '---' "source: $source_label" "captured_at: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" 'status: pending' '---' ''
     if [ "$inbox_source" = - ]; then cat; else [ -f "$inbox_source" ] || die "inbox source not found: $inbox_source"; cat "$inbox_source"; fi
   } > "$target"
-  printf 'Captured memory candidate: %s\n' "raw/memory-inbox/$(basename "$target")"
+  chmod 600 "$target"
+  umask "$old_umask"
+  printf 'Captured memory candidate: %s\n' ".llm-wiki/private-inbox/$(basename "$target")"
 }
 
 memory_list() {
@@ -487,7 +534,7 @@ status_cmd() {
   pages=$(find "$ROOT/$wiki_root" -type f -name '*.md' | wc -l | tr -d ' ')
   sources=$(awk 'NR > 1 { count++ } END { print count + 0 }' "$ROOT/.llm-wiki/sources.tsv")
   memories=$(find "$ROOT/wiki/memory" -type f -name '*.md' | wc -l | tr -d ' ')
-  inbox=$(find "$ROOT/raw/memory-inbox" -type f -name '*.md' | wc -l | tr -d ' ')
+  inbox=$(find "$ROOT/.llm-wiki/private-inbox" -type f -name '*.md' | wc -l | tr -d ' ')
   printf 'root: %s\nname: %s\npages: %s\nmemories: %s\ninbox: %s\nsources: %s\nsource_root: %s\n' "$ROOT" "$(config_value name)" "$pages" "$memories" "$inbox" "$sources" "$source_root"
 }
 
